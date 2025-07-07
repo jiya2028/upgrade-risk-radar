@@ -14,7 +14,239 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      market_data: {
+        Row: {
+          id: string
+          market_cap: number | null
+          price_usd: number
+          protocol_id: string
+          timestamp: string
+          volatility: number | null
+          volume_24h: number | null
+        }
+        Insert: {
+          id?: string
+          market_cap?: number | null
+          price_usd: number
+          protocol_id: string
+          timestamp?: string
+          volatility?: number | null
+          volume_24h?: number | null
+        }
+        Update: {
+          id?: string
+          market_cap?: number | null
+          price_usd?: number
+          protocol_id?: string
+          timestamp?: string
+          volatility?: number | null
+          volume_24h?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_data_protocol_id_fkey"
+            columns: ["protocol_id"]
+            isOneToOne: false
+            referencedRelation: "protocols"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      networks: {
+        Row: {
+          block_explorer_url: string
+          chain_id: number
+          created_at: string
+          current_block_height: number | null
+          gas_price: number | null
+          id: string
+          name: string
+          rpc_url: string
+          status: string
+          tvl_usd: number | null
+          updated_at: string
+        }
+        Insert: {
+          block_explorer_url: string
+          chain_id: number
+          created_at?: string
+          current_block_height?: number | null
+          gas_price?: number | null
+          id?: string
+          name: string
+          rpc_url: string
+          status?: string
+          tvl_usd?: number | null
+          updated_at?: string
+        }
+        Update: {
+          block_explorer_url?: string
+          chain_id?: number
+          created_at?: string
+          current_block_height?: number | null
+          gas_price?: number | null
+          id?: string
+          name?: string
+          rpc_url?: string
+          status?: string
+          tvl_usd?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      protocol_upgrades: {
+        Row: {
+          created_at: string
+          description: string | null
+          execution_eta: string | null
+          id: string
+          liquidity_shift: number | null
+          proposal_id: string
+          protocol_id: string
+          risk_score: number | null
+          status: string
+          title: string
+          updated_at: string
+          upgrade_type: string
+          volatility_impact: number | null
+          voting_ends_at: string | null
+          voting_progress: number | null
+          voting_starts_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          execution_eta?: string | null
+          id?: string
+          liquidity_shift?: number | null
+          proposal_id: string
+          protocol_id: string
+          risk_score?: number | null
+          status: string
+          title: string
+          updated_at?: string
+          upgrade_type: string
+          volatility_impact?: number | null
+          voting_ends_at?: string | null
+          voting_progress?: number | null
+          voting_starts_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          execution_eta?: string | null
+          id?: string
+          liquidity_shift?: number | null
+          proposal_id?: string
+          protocol_id?: string
+          risk_score?: number | null
+          status?: string
+          title?: string
+          updated_at?: string
+          upgrade_type?: string
+          volatility_impact?: number | null
+          voting_ends_at?: string | null
+          voting_progress?: number | null
+          voting_starts_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "protocol_upgrades_protocol_id_fkey"
+            columns: ["protocol_id"]
+            isOneToOne: false
+            referencedRelation: "protocols"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      protocols: {
+        Row: {
+          contract_address: string
+          created_at: string
+          id: string
+          name: string
+          network_id: string
+          protocol_type: string
+          risk_score: number | null
+          tvl_usd: number | null
+          updated_at: string
+        }
+        Insert: {
+          contract_address: string
+          created_at?: string
+          id?: string
+          name: string
+          network_id: string
+          protocol_type: string
+          risk_score?: number | null
+          tvl_usd?: number | null
+          updated_at?: string
+        }
+        Update: {
+          contract_address?: string
+          created_at?: string
+          id?: string
+          name?: string
+          network_id?: string
+          protocol_type?: string
+          risk_score?: number | null
+          tvl_usd?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "protocols_network_id_fkey"
+            columns: ["network_id"]
+            isOneToOne: false
+            referencedRelation: "networks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      risk_assessments: {
+        Row: {
+          confidence_score: number | null
+          created_at: string
+          governance_risk: number | null
+          id: string
+          liquidity_risk: number | null
+          market_risk: number | null
+          overall_risk: number | null
+          technical_risk: number | null
+          upgrade_id: string
+        }
+        Insert: {
+          confidence_score?: number | null
+          created_at?: string
+          governance_risk?: number | null
+          id?: string
+          liquidity_risk?: number | null
+          market_risk?: number | null
+          overall_risk?: number | null
+          technical_risk?: number | null
+          upgrade_id: string
+        }
+        Update: {
+          confidence_score?: number | null
+          created_at?: string
+          governance_risk?: number | null
+          id?: string
+          liquidity_risk?: number | null
+          market_risk?: number | null
+          overall_risk?: number | null
+          technical_risk?: number | null
+          upgrade_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "risk_assessments_upgrade_id_fkey"
+            columns: ["upgrade_id"]
+            isOneToOne: false
+            referencedRelation: "protocol_upgrades"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never

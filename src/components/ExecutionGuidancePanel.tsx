@@ -5,6 +5,9 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { supabase } from "@/integrations/supabase/client";
+import { useEffect, useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 interface ExecutionRecommendation {
   action: "buy" | "sell" | "hold" | "hedge";
@@ -112,12 +115,39 @@ const getImpactColor = (impact: string) => {
 };
 
 export const ExecutionGuidancePanel = () => {
+  const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
+
+  const fetchRecommendations = async () => {
+    setLoading(true);
+    try {
+      const { data } = await supabase.functions.invoke('risk-predictor', {
+        body: { action: 'generate_recommendations', upgradeData: { riskScore: 75 } }
+      });
+      console.log('Updated recommendations:', data);
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to fetch recommendations", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <Card className="h-full bg-card/50 backdrop-blur-sm border-border/50">
       <CardHeader className="pb-3">
         <CardTitle className="text-xl text-primary flex items-center justify-between">
           Execution Guidance
-          <Badge variant="outline" className="text-xs">AI-Powered</Badge>
+          <div className="flex items-center space-x-2">
+            <Badge variant="outline" className="text-xs">AI-Powered</Badge>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={fetchRecommendations}
+              disabled={loading}
+            >
+              {loading ? "Updating..." : "Refresh"}
+            </Button>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">

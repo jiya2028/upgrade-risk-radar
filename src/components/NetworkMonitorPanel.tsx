@@ -5,30 +5,34 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import { supabase } from "@/integrations/supabase/client";
+import { useEffect, useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 interface NetworkStatus {
+  id: string;
   name: string;
   status: "active" | "warning" | "critical";
-  blockHeight: number;
-  gasPrice: number;
-  tvl: string;
-  upgrades: number;
+  current_block_height: number;
+  gas_price: number;
+  tvl_usd: number;
+  chain_id: number;
 }
 
-const networks: NetworkStatus[] = [
-  { name: "Ethereum", status: "warning", blockHeight: 18842156, gasPrice: 25, tvl: "$24.8B", upgrades: 2 },
-  { name: "Polygon", status: "active", blockHeight: 50123789, gasPrice: 30, tvl: "$1.2B", upgrades: 0 },
-  { name: "Arbitrum", status: "critical", blockHeight: 156789123, gasPrice: 0.1, tvl: "$2.1B", upgrades: 1 },
-  { name: "Bitcoin", status: "active", blockHeight: 819456, gasPrice: 15, tvl: "$45.2B", upgrades: 0 },
-];
-
-const protocols = [
-  { address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", name: "Uniswap V3", risk: 85 },
-  { address: "0xA0b86a33E6441d8A2F4F5C87094A16E8b03F85E9", name: "Compound", risk: 62 },
-  { address: "0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9", name: "Aave V2", risk: 45 },
-];
+interface Protocol {
+  address: string;
+  name: string;
+  risk: number;
+}
 
 export const NetworkMonitorPanel = () => {
+  const [networks, setNetworks] = useState<NetworkStatus[]>([]);
+  const [protocols, setProtocols] = useState<Protocol[]>([]);
+  const [selectedNetwork, setSelectedNetwork] = useState<string>("ethereum");
+  const [protocolAddress, setProtocolAddress] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "active": return "text-upgrade-success border-upgrade-success/50 bg-upgrade-success/10";
@@ -37,6 +41,114 @@ export const NetworkMonitorPanel = () => {
       default: return "text-muted-foreground";
     }
   };
+
+  const formatTVL = (tvl: number) => {
+    if (tvl >= 1e9) return `$${(tvl / 1e9).toFixed(1)}B`;
+    if (tvl >= 1e6) return `$${(tvl / 1e6).toFixed(1)}M`;
+    if (tvl >= 1e3) return `$${(tvl / 1e3).toFixed(1)}K`;
+    return `$${tvl.toFixed(0)}`;
+  };
+
+  const fetchNetworkData = async () => {
+    try {
+      setLoading(true);
+      
+      // Fetch networks from database
+      const { data: networkData, error: networkError } = await supabase
+        .from('networks')
+        .select('*')
+        .order('name');
+
+      if (networkError) throw networkError;
+      setNetworks((networkData || []) as NetworkStatus[]);
+
+      // Call blockchain monitor service to update network data
+      const { data: monitorData, error: monitorError } = await supabase.functions.invoke('blockchain-monitor', {
+        body: { action: 'monitor_networks' }
+      });
+
+      if (monitorError) {
+        console.error('Monitor service error:', monitorError);
+      } else {
+        console.log('Network monitoring updated:', monitorData);
+        // Refresh network data after update
+        const { data: updatedNetworks } = await supabase
+          .from('networks')
+          .select('*')
+          .order('name');
+        setNetworks((updatedNetworks || []) as NetworkStatus[]);
+      }
+
+    } catch (error) {
+      console.error('Error fetching network data:', error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch network data",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addProtocol = async () => {
+    if (!protocolAddress.trim()) {
+      toast({
+        title: "Error", 
+        description: "Please enter a protocol address",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      setLoading(true);
+      
+      // Call risk assessment service
+      const { data: riskData, error } = await supabase.functions.invoke('blockchain-monitor', {
+        body: { 
+          action: 'assess_risk', 
+          address: protocolAddress.trim() 
+        }
+      });
+
+      if (error) throw error;
+
+      if (riskData.success) {
+        const newProtocol: Protocol = {
+          address: protocolAddress.trim(),
+          name: riskData.protocol,
+          risk: riskData.riskScore
+        };
+        
+        setProtocols(prev => [...prev, newProtocol]);
+        setProtocolAddress("");
+        
+        toast({
+          title: "Protocol Added",
+          description: `${riskData.protocol} added with risk score: ${riskData.riskScore}`,
+        });
+      } else {
+        throw new Error('Protocol not found');
+      }
+    } catch (error) {
+      console.error('Error adding protocol:', error);
+      toast({
+        title: "Error",
+        description: "Failed to add protocol. Please check the address.",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchNetworkData();
+    // Set up periodic updates every 30 seconds
+    const interval = setInterval(fetchNetworkData, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <Card className="h-full bg-card/50 backdrop-blur-sm border-border/50">
@@ -50,15 +162,16 @@ export const NetworkMonitorPanel = () => {
         {/* Network Selection */}
         <div className="space-y-2">
           <Label htmlFor="network-select">Network Selection</Label>
-          <Select defaultValue="ethereum">
+          <Select value={selectedNetwork} onValueChange={setSelectedNetwork}>
             <SelectTrigger id="network-select">
               <SelectValue placeholder="Select network" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="ethereum">Ethereum</SelectItem>
-              <SelectItem value="polygon">Polygon</SelectItem>
-              <SelectItem value="arbitrum">Arbitrum</SelectItem>
-              <SelectItem value="bitcoin">Bitcoin</SelectItem>
+              {networks.map((network) => (
+                <SelectItem key={network.id} value={network.name.toLowerCase()}>
+                  {network.name}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -70,17 +183,35 @@ export const NetworkMonitorPanel = () => {
             id="protocol-address"
             placeholder="0x..."
             className="font-mono text-sm"
+            value={protocolAddress}
+            onChange={(e) => setProtocolAddress(e.target.value)}
           />
-          <Button variant="outline" size="sm" className="w-full">
-            Add Protocol
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="w-full"
+            onClick={addProtocol}
+            disabled={loading}
+          >
+            {loading ? "Adding..." : "Add Protocol"}
           </Button>
         </div>
 
         {/* Network Status */}
         <div className="space-y-3">
-          <Label>Network Status</Label>
+          <div className="flex items-center justify-between">
+            <Label>Network Status</Label>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={fetchNetworkData}
+              disabled={loading}
+            >
+              {loading ? "Updating..." : "Refresh"}
+            </Button>
+          </div>
           {networks.map((network) => (
-            <Card key={network.name} className="p-3 bg-card/30">
+            <Card key={network.id} className="p-3 bg-card/30">
               <div className="flex items-center justify-between mb-2">
                 <span className="font-medium">{network.name}</span>
                 <Badge variant="outline" className={getStatusColor(network.status)}>
@@ -88,10 +219,10 @@ export const NetworkMonitorPanel = () => {
                 </Badge>
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                <div>Block: {network.blockHeight.toLocaleString()}</div>
-                <div>Gas: {network.gasPrice} gwei</div>
-                <div>TVL: {network.tvl}</div>
-                <div>Upgrades: {network.upgrades}</div>
+                <div>Block: {network.current_block_height.toLocaleString()}</div>
+                <div>Gas: {network.gas_price} gwei</div>
+                <div>TVL: {formatTVL(network.tvl_usd)}</div>
+                <div>Chain: {network.chain_id || 'N/A'}</div>
               </div>
             </Card>
           ))}
