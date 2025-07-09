@@ -4,11 +4,15 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
 interface UpgradeEvent {
+  id: string;
   protocol: string;
   type: "governance" | "implementation" | "parameter";
-  status: "upcoming" | "active" | "completed";
+  status: "upcoming" | "active" | "completed" | "failed";
   proposalId: string;
   description: string;
   timeRemaining: string;
@@ -16,46 +20,9 @@ interface UpgradeEvent {
   volatilityImpact: number;
   liquidityShift: number;
   votingProgress?: number;
+  voting_ends_at?: string;
+  execution_eta?: string;
 }
-
-const upgrades: UpgradeEvent[] = [
-  {
-    protocol: "Uniswap V3",
-    type: "governance",
-    status: "active",
-    proposalId: "UNI-042",
-    description: "Fee tier adjustment for stablecoin pairs",
-    timeRemaining: "2d 14h",
-    riskScore: 85,
-    volatilityImpact: 12.5,
-    liquidityShift: -8.2,
-    votingProgress: 67
-  },
-  {
-    protocol: "Compound",
-    type: "implementation",
-    status: "upcoming",
-    proposalId: "COMP-156",
-    description: "Interest rate model upgrade",
-    timeRemaining: "5d 8h",
-    riskScore: 72,
-    volatilityImpact: 18.3,
-    liquidityShift: 15.6,
-    votingProgress: 23
-  },
-  {
-    protocol: "Aave V2",
-    type: "parameter",
-    status: "active",
-    proposalId: "AIP-89",
-    description: "Collateral factor adjustments",
-    timeRemaining: "1d 3h",
-    riskScore: 45,
-    volatilityImpact: 6.8,
-    liquidityShift: 3.2,
-    votingProgress: 89
-  }
-];
 
 const getRiskColor = (score: number) => {
   if (score >= 80) return "text-upgrade-critical bg-upgrade-critical/10 border-upgrade-critical/50";
@@ -73,19 +40,172 @@ const getTypeColor = (type: string) => {
 };
 
 export const UpgradeTimelinePanel = () => {
+  const [upgrades, setUpgrades] = useState<UpgradeEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedTimeHorizon, setSelectedTimeHorizon] = useState("short-term");
+  const [activeTab, setActiveTab] = useState("all");
+  const { toast } = useToast();
+
+  // Fetch protocol upgrades from database
+  const fetchUpgrades = async () => {
+    try {
+      const { data: upgradesData, error } = await supabase
+        .from('protocol_upgrades')
+        .select(`
+          *,
+          protocols!inner(name, protocol_type)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Transform data and calculate time remaining
+      const transformedUpgrades = upgradesData?.map(upgrade => {
+        const votingEnds = upgrade.voting_ends_at ? new Date(upgrade.voting_ends_at) : null;
+        const executionEta = upgrade.execution_eta ? new Date(upgrade.execution_eta) : null;
+        const now = new Date();
+        
+        let timeRemaining = "N/A";
+        if (votingEnds && votingEnds > now) {
+          const diff = votingEnds.getTime() - now.getTime();
+          const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+          const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+          timeRemaining = `${days}d ${hours}h`;
+        } else if (executionEta && executionEta > now) {
+          const diff = executionEta.getTime() - now.getTime();
+          const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+          const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+          timeRemaining = `${days}d ${hours}h`;
+        }
+
+        return {
+          id: upgrade.id,
+          protocol: upgrade.protocols?.name || "Unknown",
+          type: upgrade.upgrade_type as "governance" | "implementation" | "parameter",
+          status: upgrade.status as "upcoming" | "active" | "completed" | "failed",
+          proposalId: upgrade.proposal_id,
+          description: upgrade.description || upgrade.title,
+          timeRemaining,
+          riskScore: upgrade.risk_score || 0,
+          volatilityImpact: Number(upgrade.volatility_impact) || 0,
+          liquidityShift: Number(upgrade.liquidity_shift) || 0,
+          votingProgress: Number(upgrade.voting_progress) || 0,
+          voting_ends_at: upgrade.voting_ends_at,
+          execution_eta: upgrade.execution_eta
+        };
+      }) || [];
+
+      setUpgrades(transformedUpgrades);
+    } catch (error) {
+      console.error('Error fetching upgrades:', error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch protocol upgrades",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch governance proposals from blockchain monitor
+  const fetchGovernanceProposals = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('blockchain-monitor', {
+        body: { action: 'fetch_governance' }
+      });
+
+      if (error) throw error;
+
+      if (data?.success && data?.proposals) {
+        // Add governance proposals to the state
+        const governanceUpgrades = data.proposals.map((proposal: any) => ({
+          id: `governance-${proposal.id}`,
+          protocol: proposal.protocol,
+          type: proposal.type,
+          status: proposal.status,
+          proposalId: proposal.id,
+          description: proposal.title,
+          timeRemaining: proposal.timeRemaining,
+          riskScore: proposal.riskScore,
+          volatilityImpact: proposal.volatilityImpact,
+          liquidityShift: proposal.liquidityShift,
+          votingProgress: proposal.votingProgress
+        }));
+
+        setUpgrades(prev => [...prev, ...governanceUpgrades]);
+      }
+    } catch (error) {
+      console.error('Error fetching governance proposals:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchUpgrades();
+    fetchGovernanceProposals();
+
+    // Set up real-time subscription for protocol upgrades
+    const channel = supabase
+      .channel('protocol-upgrades-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'protocol_upgrades'
+        },
+        () => {
+          fetchUpgrades(); // Refetch data on changes
+        }
+      )
+      .subscribe();
+
+    // Refresh data every 30 seconds
+    const interval = setInterval(() => {
+      fetchGovernanceProposals();
+    }, 30000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Filter upgrades based on active tab
+  const filteredUpgrades = upgrades.filter(upgrade => {
+    if (activeTab === "all") return true;
+    return upgrade.type === activeTab;
+  });
+
+  const riskCounts = {
+    high: upgrades.filter(u => u.riskScore >= 80).length,
+    medium: upgrades.filter(u => u.riskScore >= 60 && u.riskScore < 80).length,
+    low: upgrades.filter(u => u.riskScore < 60).length
+  };
+
+  if (loading) {
+    return (
+      <Card className="h-full bg-card/50 backdrop-blur-sm border-border/50">
+        <CardContent className="flex items-center justify-center h-full">
+          <div className="text-muted-foreground">Loading protocol upgrades...</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card className="h-full bg-card/50 backdrop-blur-sm border-border/50">
       <CardHeader className="pb-3">
         <CardTitle className="text-xl text-primary flex items-center justify-between">
           Protocol Upgrades
-          <Badge variant="outline" className="text-xs">3 Active</Badge>
+          <Badge variant="outline" className="text-xs">{upgrades.filter(u => u.status === 'active').length} Active</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Time Horizon Selection */}
         <div className="space-y-2">
           <Label>Time Horizon</Label>
-          <Select defaultValue="short-term">
+          <Select value={selectedTimeHorizon} onValueChange={setSelectedTimeHorizon}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -98,16 +218,21 @@ export const UpgradeTimelinePanel = () => {
         </div>
 
         {/* Upgrade Types Filter */}
-        <Tabs defaultValue="all" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
+            <TabsTrigger value="all" className="text-xs">All ({upgrades.length})</TabsTrigger>
             <TabsTrigger value="governance" className="text-xs">Gov</TabsTrigger>
             <TabsTrigger value="implementation" className="text-xs">Impl</TabsTrigger>
             <TabsTrigger value="parameter" className="text-xs">Param</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="all" className="mt-4 space-y-3">
-            {upgrades.map((upgrade, index) => (
+          <TabsContent value={activeTab} className="mt-4 space-y-3">
+            {filteredUpgrades.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">
+                No {activeTab === "all" ? "" : activeTab} upgrades found
+              </div>
+            ) : (
+              filteredUpgrades.map((upgrade, index) => (
               <Card key={index} className="p-4 bg-card/30 border-border/30">
                 <div className="space-y-3">
                   {/* Header */}
@@ -162,17 +287,8 @@ export const UpgradeTimelinePanel = () => {
                   </div>
                 </div>
               </Card>
-            ))}
-          </TabsContent>
-
-          {/* Other tab contents would filter the upgrades array */}
-          <TabsContent value="governance" className="mt-4 space-y-3">
-            {upgrades.filter(u => u.type === "governance").map((upgrade, index) => (
-              <Card key={index} className="p-4 bg-card/30 border-border/30">
-                {/* Same card structure as above */}
-                <div className="text-sm">{upgrade.protocol} - {upgrade.description}</div>
-              </Card>
-            ))}
+              ))
+            )}
           </TabsContent>
         </Tabs>
 
@@ -182,15 +298,15 @@ export const UpgradeTimelinePanel = () => {
             <div className="text-sm font-medium">Risk Indicators Summary</div>
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div className="text-center">
-                <div className="text-upgrade-critical font-medium">3</div>
+                <div className="text-upgrade-critical font-medium">{riskCounts.high}</div>
                 <div className="text-muted-foreground">High Risk</div>
               </div>
               <div className="text-center">
-                <div className="text-upgrade-warning font-medium">2</div>
+                <div className="text-upgrade-warning font-medium">{riskCounts.medium}</div>
                 <div className="text-muted-foreground">Medium Risk</div>
               </div>
               <div className="text-center">
-                <div className="text-upgrade-success font-medium">1</div>
+                <div className="text-upgrade-success font-medium">{riskCounts.low}</div>
                 <div className="text-muted-foreground">Low Risk</div>
               </div>
             </div>
